@@ -7,7 +7,7 @@ SHELL ["/bin/bash", "-c"]
 # RUN echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/ros-archive-keyring.gpg] http://packages.ros.org/ros2/ubuntu $(. /etc/os-release && echo $UBUNTU_CODENAME) main" | tee /etc/apt/sources.list.d/ros2.list > /dev/null
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
- git python3-pip vim eog xterm less wget
+ git python3-pip vim eog xterm less wget xauth
 
 RUN apt-get update && apt install -y python3-colcon-common-extensions
 
@@ -68,19 +68,46 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
  ros-humble-dynamixel-sdk ros-humble-ros2-control ros-humble-ros2-controllers ros-humble-gripper-controllers \
- ros-humble-moveit ros-humble-moveit-servo ros-humble-cartographer \ 
+ ros-humble-moveit ros-humble-moveit-servo ros-humble-cartographer \
  ros-humble-realsense2-description \
  ros-humble-cartographer-ros ros-humble-gripper-controllers \
  ros-humble-tf-transformations
 
+# --- VirtualGL (3.1), TurboVNC (3.1), XFCE4 の追加 ---
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+ dbus-x11 x11-xserver-utils libgl1-mesa-glx libegl1-mesa libgles2-mesa mesa-utils xfce4 xfce4-terminal \
+ && rm -rf /var/lib/apt/lists/*
+
+RUN wget https://sourceforge.net/projects/virtualgl/files/3.1/virtualgl_3.1_amd64.deb \
+ && dpkg -i virtualgl_3.1_amd64.deb \
+ && rm virtualgl_3.1_amd64.deb
+
+RUN wget https://sourceforge.net/projects/turbovnc/files/3.1/turbovnc_3.1_amd64.deb \
+ && dpkg -i turbovnc_3.1_amd64.deb \
+ && rm turbovnc_3.1_amd64.deb
+
+# 環境変数の追加とVNCパスワード・起動スクリプトの設定
+ENV PATH=$PATH:/opt/TurboVNC/bin:/opt/VirtualGL/bin
+RUN echo 'export PATH=$PATH:/opt/TurboVNC/bin:/opt/VirtualGL/bin' >> .bashrc
+
+RUN mkdir -p /root/.vnc \
+ && echo 'lime2026' | vncpasswd -f > /root/.vnc/passwd \
+ && chmod 600 /root/.vnc/passwd \
+ && echo '#!/bin/sh' > /root/.vnc/xstartup.turbovnc \
+ && echo 'unset SESSION_MANAGER' >> /root/.vnc/xstartup.turbovnc \
+ && echo 'unset DBUS_SESSION_BUS_ADDRESS' >> /root/.vnc/xstartup.turbovnc \
+ && echo 'exec startxfce4' >> /root/.vnc/xstartup.turbovnc \
+ && chmod +x /root/.vnc/xstartup.turbovnc
+# -----------------------------------------
+
 RUN mkdir -p /root/turtlebot3_ws/src
-WORKDIR /root/turtlebot3_ws 
+WORKDIR /root/turtlebot3_ws
 RUN git clone -b humble-devel https://github.com/ROBOTIS-JAPAN-GIT/turtlebot3_lime.git
 RUN git clone https://github.com/ldrobotSensorTeam/ldlidar_stl_ros2.git
 RUN git clone -b foxy-devel https://github.com/pal-robotics/realsense_gazebo_plugin.git
 RUN source /opt/ros/${ROS_DISTRO}/setup.bash \
 && colcon build --symlink-install
-WORKDIR /root/turtlebot3_ws/install 
+WORKDIR /root/turtlebot3_ws/install
 COPY ./project/resource/turtlebot3_lime.urdf.xacro turtlebot3_lime_description/share/turtlebot3_lime_description/urdf
 # COPY ./project/resource/gazebo2.launch.py turtlebot3_lime_bringup/share/turtlebot3_lime_bringup/launch
 # COPY ./project/resource/moveit_gazebo2.launch.py turtlebot3_lime_moveit_config/share/turtlebot3_lime_moveit_config/launch
