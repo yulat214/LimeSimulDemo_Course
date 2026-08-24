@@ -7,6 +7,17 @@ SHELL ["/bin/bash", "-c"]
 # RUN echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/ros-archive-keyring.gpg] http://packages.ros.org/ros2/ubuntu $(. /etc/os-release && echo $UBUNTU_CODENAME) main" | tee /etc/apt/sources.list.d/ros2.list > /dev/null
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
+      gpg-agent wget ca-certificates && \
+    wget -qO - https://repositories.intel.com/gpu/intel-graphics.key \
+      | gpg --dearmor -o /usr/share/keyrings/intel-graphics.gpg && \
+    echo "deb [arch=amd64 signed-by=/usr/share/keyrings/intel-graphics.gpg] https://repositories.intel.com/gpu/ubuntu jammy unified" \
+      > /etc/apt/sources.list.d/intel-gpu.list && \
+    apt-get update && apt-get install -y --no-install-recommends \
+      libze1 libze-intel-gpu1 intel-opencl-icd intel-ocloc clinfo && \
+    rm -rf /var/lib/apt/lists/*
+ENV LD_LIBRARY_PATH=/usr/lib/wsl/lib
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
  git python3-pip vim eog xterm less wget
 
 RUN apt-get update && apt install -y python3-colcon-common-extensions

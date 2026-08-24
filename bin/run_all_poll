@@ -1,0 +1,70 @@
+#!/bin/bash
+# run_all の sleep 固定待ちを、実際の起動完了ポーリングに置き換えた試験版。
+# 元の bin/run_all は変更していないので、比較用に両方使えます。
+
+source ~/turtlebot3_ws/install/setup.bash
+source ~/roscommon/ws_moveit2/install/setup.bash
+
+LOG_DIR=/tmp/run_all_poll_logs
+mkdir -p "$LOG_DIR"
+
+CHILD_PIDS=()
+cleanup() {
+    for pid in "${CHILD_PIDS[@]}"; do
+        kill "$pid" 2>/dev/null
+    done
+}
+trap cleanup EXIT INT TERM
+
+# $1: 待ち対象名(ログ用) $2: grep パターン $3: "topic"|"node" $4: 監視対象PID $5: タイムアウト秒
+wait_for() {
+    local label="$1" pattern="$2" kind="$3" watch_pid="$4" timeout="${5:-90}"
+    local waited=0
+    echo "[run_all_poll] waiting for ${label} (timeout ${timeout}s)..."
+    while true; do
+        if ! kill -0 "$watch_pid" 2>/dev/null; then
+            echo "[run_all_poll] ERROR: process for '${label}' exited before it came up." >&2
+            echo "[run_all_poll] last 40 lines of its log:" >&2
+            tail -n 40 "$LOG_DIR/${label}.log" >&2
+            return 1
+        fi
+        if [ "$kind" = "topic" ]; then
+            ros2 topic list 2>/dev/null | grep -q "$pattern" && break
+        else
+            ros2 node list 2>/dev/null | grep -q "$pattern" && break
+        fi
+        sleep 1
+        waited=$((waited + 1))
+        if [ "$waited" -ge "$timeout" ]; then
+            echo "[run_all_poll] ERROR: timed out waiting for ${label}." >&2
+            echo "[run_all_poll] last 40 lines of its log:" >&2
+            tail -n 40 "$LOG_DIR/${label}.log" >&2
+            return 1
+        fi
+    done
+    echo "[run_all_poll] ${label} is up (waited ${waited}s)."
+}
+
+echo "[run_all_poll] launching gazebo..."
+ros2 launch turtlebot3_lime_bringup gazebo.launch.py \
+    x_pose:=0 y_pose:=0 world:=/project/resource/sim_house.world \
+    > "$LOG_DIR/gazebo.log" 2>&1 &
+GAZEBO_PID=$!
+CHILD_PIDS+=("$GAZEBO_PID")
+
+# joint_states は controller_manager がコントローラを active にしてから出る
+# = world 読み込み + spawn_entity + controller 読み込みが全部終わった後の合図
+wait_for "gazebo" "/joint_states" topic "$GAZEBO_PID" 120 || exit 1
+
+echo "[run_all_poll] launching servo..."
+ros2 launch turtlebot3_lime_moveit_config servo.launch.py use_sim:=true \
+    > "$LOG_DIR/servo.log" 2>&1 &
+SERVO_PID=$!
+CHILD_PIDS+=("$SERVO_PID")
+
+wait_for "servo" "servo_node" node "$SERVO_PID" 60 || exit 1
+
+echo "[run_all_poll] launching moveit + navigation2 (foreground)..."
+ros2 launch turtlebot3_lime_bringup moveit_navigation_use_sim_time.launch.py \
+    map_yaml_file:=/project/resource/map/sim_house_map.yaml \
+    2>&1 | tee "$LOG_DIR/navigation.log"
